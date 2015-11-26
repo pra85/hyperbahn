@@ -103,7 +103,6 @@ function ServiceDispatchHandler(options) {
      * exitServices          :: Map<serviceName, lastRefresh>
      * peersToReap           :: Map<hostPort, lastRefresh>
      * knownPeers            :: Map<hostPort, lastRefresh>
-     * connectedServicePeers :: Map<serviceName, Map<hostPort, lastRefresh>>
      * connectedPeerServices :: Map<hostPort, Map<serviceName, lastRefresh>>
      *
      * PartialRange    :: {
@@ -118,8 +117,8 @@ function ServiceDispatchHandler(options) {
      *   affineWorkers :: ?Array<hostPort> // the computed subset of workers
      * }
      *
-     * connectedServicePeers and connectedPeerServices are updated by
-     * connection events, maybe subject to partial affinity.
+     * connectedPeerServices is updated by connection events, maybe subject to
+     * partial affinity.
      *
      * On every advertise knownPeers is updated.
      *
@@ -128,7 +127,6 @@ function ServiceDispatchHandler(options) {
      */
     self.partialRanges = Object.create(null);
     self.exitServices = Object.create(null);
-    self.connectedServicePeers = Object.create(null);
     self.connectedPeerServices = Object.create(null);
     self.peersToReap = Object.create(null);
     self.knownPeers = Object.create(null);
@@ -607,7 +605,8 @@ function deletePeerIndex(serviceName, hostPort) {
     var self = this;
 
     if (self.partialAffinityEnabled) {
-        deleteIndexEntry(self.connectedServicePeers, serviceName, hostPort);
+        var partialRange = self.partialRanges[serviceName];
+        delete partialRange.connectedWorkers[hostPort];
         deleteIndexEntry(self.connectedPeerServices, hostPort, serviceName);
     }
     deleteIndexEntry(self.knownPeers, hostPort, serviceName);
@@ -618,7 +617,8 @@ function ensurePeerConnected(serviceName, peer, reason, now) {
     var self = this;
 
     if (self.partialAffinityEnabled) {
-        addIndexEntry(self.connectedServicePeers, serviceName, peer.hostPort, now);
+        var partialRange = self.partialRanges[serviceName];
+        partialRange.connectedWorkers[peer.hostPort] = now;
         addIndexEntry(self.connectedPeerServices, peer.hostPort, serviceName, now);
     }
     delete self.peersToPrune[peer.hostPort];
@@ -715,11 +715,11 @@ function refreshServicePeerPartially(serviceName, hostPort, now) {
         // secondary indices since neither ensurePeerConnected nor
         // ensurePeerDisconnected were called for the advertising peer
         if (result.isAffine[hostPort]) {
-            addIndexEntry(self.connectedServicePeers, serviceName, hostPort, now);
+            partialRange.connectedWorkers[hostPort] = now;
             addIndexEntry(self.connectedPeerServices, hostPort, serviceName, now);
             delete self.peersToPrune[hostPort];
         } else {
-            deleteIndexEntry(self.connectedServicePeers, serviceName, hostPort);
+            delete partialRange.connectedWorkers[hostPort];
             deleteIndexEntry(self.connectedPeerServices, hostPort, serviceName);
         }
     }
@@ -731,16 +731,15 @@ function freshenPartialPeer(peer, serviceName, now) {
 
     var hostPort = peer.hostPort;
     var partialRange = self.getPartialRange(serviceName, 'refresh partial peer audit', now);
-    var connectedPeers = self.connectedServicePeers[serviceName];
-    var connected = connectedPeers && connectedPeers[hostPort];
+    var connected = partialRange.connectedWorkers[hostPort];
 
     // Update secondary indices
     if (connected) {
-        addIndexEntry(self.connectedServicePeers, serviceName, peer.hostPort, now);
+        partialRange.connectedWorkers[hostPort] = now;
         addIndexEntry(self.connectedPeerServices, hostPort, serviceName, now);
         delete self.peersToPrune[hostPort];
     } else {
-        deleteIndexEntry(self.connectedServicePeers, serviceName, peer.hostPort);
+        delete partialRange.connectedWorkers[hostPort];
         deleteIndexEntry(self.connectedPeerServices, hostPort, serviceName);
     }
 
@@ -762,7 +761,7 @@ function freshenPartialPeer(peer, serviceName, now) {
                 serviceHostPort: hostPort,
                 isConnected: isConnected,
                 shouldConnect: shouldConnect,
-                connectedPeers: objectTuples(connectedPeers)
+                connectedPeers: objectTuples(partialRange.connectedWorkers)
             }))
         );
         if (shouldConnect) {
@@ -783,7 +782,7 @@ function freshenPartialPeer(peer, serviceName, now) {
         self.extendLogInfo({
             serviceName: serviceName,
             serviceHostPort: hostPort,
-            numConnectedPeers: countKeys(connectedPeers),
+            numConnectedPeers: objectTuples(partialRange.connectedWorkers),
             isConnected: connected
         })
     );
@@ -809,8 +808,6 @@ function ensurePartialConnections(serviceChannel, serviceName, reason, now) {
         // TODO: why not return early
     }
 
-    var connectedPeers = self.connectedServicePeers[serviceName];
-    var connectedPeerKeys = connectedPeers ? Object.keys(connectedPeers) : [];
     var toConnect = [];
     var toDisconnect = [];
     var isAffine = {};
@@ -827,7 +824,7 @@ function ensurePartialConnections(serviceChannel, serviceName, reason, now) {
         peer = self._getServicePeer(serviceChannel, worker);
         isAffine[worker] = true;
 
-        if (!connectedPeers || !connectedPeers[worker]) {
+        if (!partialRange.connectedWorkers[worker]) {
             toConnect.push(worker);
         } else if (!peer.isConnected('out')) {
             // TODO: this audit shouldn't be necessary once we understand and fix
@@ -840,15 +837,16 @@ function ensurePartialConnections(serviceChannel, serviceName, reason, now) {
                     serviceName: serviceName,
                     isConnected: false,
                     shouldConnect: true,
-                    connectedPeers: objectTuples(connectedPeers)
+                    connectedPeers: objectTuples(partialRange.connectedWorkers)
                 }))
             );
             toConnect.push(worker);
         }
     }
 
-    for (i = 0; i < connectedPeerKeys.length; i++) {
-        worker = connectedPeerKeys[i];
+    var connectedWorkerKeys = Object.keys(partialRange.connectedWorkers);
+    for (i = 0; i < connectedWorkerKeys.length; i++) {
+        worker = connectedWorkerKeys[i];
         if (!isAffine[worker] && !self.peersToPrune[worker]) {
             toDisconnect.push(worker);
         }
@@ -886,7 +884,8 @@ function ensurePeerDisconnected(serviceName, peer, reason, now) {
     var self = this;
 
     if (self.partialAffinityEnabled) {
-        deleteIndexEntry(self.connectedServicePeers, serviceName, peer.hostPort);
+        var partialRange = self.partialRanges[serviceName];
+        delete partialRange.connectedWorkers[peer.hostPort];
         deleteIndexEntry(self.connectedPeerServices, peer.hostPort, serviceName);
     }
 
@@ -932,7 +931,7 @@ function removeServicePeer(serviceName, hostPort) {
             // if ensurePartialConnections did no work, we need to celar the
             // secondary indices since neither ensurePeerDisconnected was called
             // for the unadvertising peer
-            deleteIndexEntry(self.connectedServicePeers, serviceName, hostPort);
+            delete partialRange.connectedWorkers[hostPort];
             deleteIndexEntry(self.connectedPeerServices, hostPort, serviceName);
         }
     }
@@ -1544,7 +1543,6 @@ function setPartialAffinityEnabled(enabled) {
     var self = this;
     self.partialAffinityEnabled = !!enabled;
     self.partialRanges = Object.create(null);
-    self.connectedServicePeers = Object.create(null);
     self.connectedPeerServices = Object.create(null);
 };
 
