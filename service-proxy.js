@@ -956,6 +956,7 @@ function ensurePeerDisconnected(serviceName, peer, reason, now) {
 
     var peerServices = self.connectedPeerServices[peer.hostPort];
     if (!peerServices || isObjectEmpty(peerServices)) {
+        delete self.peersToConnect[peer.hostPort];
         self.peersToPrune[peer.hostPort] = {
             lastRefresh: now,
             reason: reason
