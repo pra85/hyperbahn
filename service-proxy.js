@@ -700,7 +700,11 @@ function ensurePeerConnected(serviceName, peer, reason, now) {
         peer.clearDrain('canceled to ensure peer connection');
     }
 
-    peer.connectTo();
+    self.peersToConnect[peer.hostPort] = {
+        lastRefresh: now,
+        serviceName: serviceName,
+        reason: reason
+    };
 };
 
 ServiceDispatchHandler.prototype.connectSinglePeer =
