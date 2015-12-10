@@ -389,6 +389,7 @@ ApplicationClients.prototype.onRemoteConfigUpdate = function onRemoteConfigUpdat
     self.updateReservoir();
     self.updateReapPeersPeriod();
     self.updatePrunePeersPeriod();
+    self.updateConnectPeersPeriod();
     self.updatePartialAffinityEnabled();
     self.setMaximumRelayTTL();
     self.updatePeerHeapEnabled();
@@ -481,6 +482,13 @@ function updatePrunePeersPeriod() {
     var self = this;
     var period = self.remoteConfig.get('peerPruner.period', 0);
     self.serviceProxy.setPrunePeersPeriod(period);
+};
+
+ApplicationClients.prototype.updateConnectPeersPeriod =
+function updateConnectPeersPeriod() {
+    var self = this;
+    var period = self.remoteConfig.get('peerConnecter.period', 100);
+    self.serviceProxy.setConnectPeersPeriod(period);
 };
 
 ApplicationClients.prototype.updatePartialAffinityEnabled = function updatePartialAffinityEnabled() {
