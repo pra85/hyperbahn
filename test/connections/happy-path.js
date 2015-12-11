@@ -66,6 +66,12 @@ allocCluster.test('find connections for service', {
     function runTest() {
         assert.comment('-- runTest');
 
+        connectClusterPears(cluster, assert, runTestConnectDone);
+    }
+
+    function runTestConnectDone() {
+        assert.comment('-- runTestConnectDone');
+
         pruneClusterPears(cluster, assert, runTestPruneDone);
     }
 
@@ -170,6 +176,27 @@ function pruneClusterPears(cluster, assert, callback) {
             for (var i = 0; i < results.length; i++) {
                 var res = results[i];
                 assert.ifError(res.err, 'no error from pruning app ' + i);
+            }
+            callback();
+        }
+    );
+}
+
+function connectClusterPears(cluster, assert, callback) {
+    collectParallel(
+        cluster.apps,
+        function connectEach(app, i, done) {
+            var serviceProxy = app.clients.serviceProxy;
+            if (serviceProxy.peerConnecter.theRun) {
+                serviceProxy.peerConnecter.theRun.endEvent.on(done);
+            } else {
+                serviceProxy.peerConnecter.run(done);
+            }
+        },
+        function finish(_, results) {
+            for (var i = 0; i < results.length; i++) {
+                var res = results[i];
+                assert.ifError(res.err, 'no error from connecting app ' + i);
             }
             callback();
         }
