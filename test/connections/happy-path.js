@@ -72,14 +72,17 @@ allocCluster.test('find connections for service', {
     function runTestPruneDone() {
         assert.comment('-- runTestPruneDone');
 
-        cluster.checkExitPeers(assert, {
-            serviceName: 'Dummy',
-            hostPort: dummies[0].hostPort
-        });
+        cluster.timers.setTimeout(function andThen() {
+            cluster.checkExitPeers(assert, {
+                serviceName: 'Dummy',
+                hostPort: dummies[0].hostPort
+            });
 
-        entryNode.client.getConnections({
-            serviceName: 'Dummy'
-        }, onResults);
+            entryNode.client.getConnections({
+                serviceName: 'Dummy'
+            }, onResults);
+        }, 100);
+
     }
 
     function onResults(err, resp) {
